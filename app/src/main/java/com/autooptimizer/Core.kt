@@ -25,7 +25,7 @@ object Sz {
     fun sh(cmd: String): String = try {
         val m = Shizuku::class.java.getDeclaredMethod("newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
         m.isAccessible = true
-        val pr = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+        val pr = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as java.lang.Process
         val out = pr.inputStream.bufferedReader().readText()
         pr.waitFor(); out
     } catch (e: Throwable) { "ERR ${e.message}" }
