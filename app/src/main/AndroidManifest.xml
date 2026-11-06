@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
     <application
         android:label="Auto Optimizer"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true">
