@@ -19,6 +19,9 @@
         <service android:name=".OptService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="device_optimization"/>
         </service>
+        <service android:name=".GameBarService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="game_overlay"/>
+        </service>
         <service android:name=".NotifListener" android:exported="true" android:label="Auto Optimizer"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter><action android:name="android.service.notification.NotificationListenerService"/></intent-filter>
