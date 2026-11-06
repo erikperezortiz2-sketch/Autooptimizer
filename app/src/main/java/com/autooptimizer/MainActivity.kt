@@ -130,6 +130,8 @@ class MainActivity : Activity() {
         val pm = packageManager
         add(tv("Mis juegos", 16f, acc(), true), btn("＋ Agregar juego") { pick() },
             tv("Mantén pulsado un juego para quitarlo.", 12f, G))
+        add(sw("Rayita de juego (panel en el borde)", p.getBoolean("bar", true)) { p.edit().putBoolean("bar", it).apply() },
+            tv("Al tocar 'Optimizar y jugar' aparece una rayita en el borde del juego. Tócala para abrir el panel.", 12f, G))
         val set = p.getStringSet("games", emptySet())!!
         for (pk in set) {
             val name = try { pm.getApplicationLabel(pm.getApplicationInfo(pk, 0)).toString() } catch (e: Exception) { continue }
@@ -154,11 +156,23 @@ class MainActivity : Activity() {
                 render(1)
             }.show()
     }
+    private fun startGameBar(pk: String) {
+        if (!p.getBoolean("bar", true)) return
+        if (!Settings.canDrawOverlays(this)) {
+            toast("Para la rayita activa 'mostrar sobre otras apps' en la pestaña Inicio")
+            return
+        }
+        startForegroundService(Intent(this, GameBarService::class.java).putExtra("game", pk))
+    }
     private fun play(pk: String) {
         toast("Optimizando…")
         Thread {
             val r = try { Opt.full(this, pk) } catch (e: Throwable) { "Error: ${e.message}" }
-            runOnUiThread { toast(r); packageManager.getLaunchIntentForPackage(pk)?.let { startActivity(it) } }
+            runOnUiThread {
+                toast(r)
+                startGameBar(pk)
+                packageManager.getLaunchIntentForPackage(pk)?.let { startActivity(it) }
+            }
         }.start()
     }
 
