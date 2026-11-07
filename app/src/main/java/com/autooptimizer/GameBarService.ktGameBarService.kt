@@ -351,6 +351,29 @@ class GameBarService : Service() {
         return true
     }
 
+    // Devuelve a lo normal lo que la rayita cambió: resolución, animaciones y No molestar.
+    private fun restoreAll() {
+        val needRes = resIdx != 0
+        val needFast = fast
+        val needDnd = dnd
+        if (!needRes && !needFast && !needDnd) return
+        if (!Sz.ready()) return
+        resIdx = 0; fast = false; dnd = false
+        Thread {
+            val cmds = StringBuilder()
+            if (needFast) cmds.append("settings put global window_animation_scale 1; settings put global transition_animation_scale 1; settings put global animator_duration_scale 1; ")
+            if (needDnd) cmds.append("settings put global zen_mode 0; ")
+            if (cmds.isNotEmpty()) Sz.sh(cmds.toString())
+            if (needRes) Opt.res(100)
+            h.post {
+                silBtn?.text = "Silencio"; style(silBtn, false)
+                pantBtn?.text = "Pantalla 100%"; style(pantBtn, false)
+                rapBtn?.text = "Rápido"; style(rapBtn, false)
+                msg?.text = "Restaurado al salir del juego"
+            }
+        }.start()
+    }
+
     private fun doClean() {
         msg?.text = "Optimizando…"
         Thread {
@@ -582,6 +605,8 @@ class GameBarService : Service() {
                     val o = Sz.sh("dumpsys activity activities | grep -i resumed")
                     val visible = o.isBlank() || o.startsWith("ERR") || o.contains(game)
                     h.post {
+                        // Si estaba dentro del juego y ya no, restaura lo que cambió
+                        if (inGame && !visible) restoreAll()
                         inGame = visible
                         if (panel == null) strip?.visibility = if (visible) View.VISIBLE else View.GONE
                     }
@@ -592,6 +617,7 @@ class GameBarService : Service() {
     }
 
     override fun onDestroy() {
+        restoreAll()
         h.removeCallbacks(poll); h.removeCallbacks(upd)
         panel?.let { try { wm?.removeView(it) } catch (e: Exception) { } }
         strip?.let { try { wm?.removeView(it) } catch (e: Exception) { } }
