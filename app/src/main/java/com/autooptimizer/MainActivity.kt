@@ -4,8 +4,14 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +35,9 @@ class MainActivity : Activity() {
     private val names = arrayOf("Neón azul", "Rojo gamer", "Verde matrix")
     private val accents = intArrayOf(0xFF00F0FF.toInt(), 0xFFFF2D55.toInt(), 0xFF39FF14.toInt(),
         0xFFFFD60A.toInt(), 0xFFBF5AF2.toInt(), 0xFFFF9F0A.toInt())
+    private var bgKey = ""
+    private var bgBmp: Bitmap? = null
+
     private fun th() = themes[p.getInt("theme", 0)]
     private fun bgC() = th()[0]
     private fun cardC() = th()[1]
@@ -39,6 +48,44 @@ class MainActivity : Activity() {
         super.onCreate(s)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         render(p.getInt("tab", 0))
+    }
+
+    private fun decodeBg(uri: Uri): Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+        var s = 1
+        while (o.outWidth / s > 1080) s *= 2
+        val o2 = BitmapFactory.Options().apply { inSampleSize = s }
+        return contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o2) }
+    }
+
+    private fun bgDrawable(): Drawable? {
+        val key = p.getString("bg", null) ?: return null
+        if (key != bgKey || bgBmp == null) {
+            bgBmp = try { decodeBg(Uri.parse(key)) } catch (e: Throwable) { null }
+            bgKey = key
+        }
+        val bmp = bgBmp ?: return null
+        return LayerDrawable(arrayOf<Drawable>(BitmapDrawable(resources, bmp), ColorDrawable(0x99000000.toInt())))
+    }
+
+    private fun pickBg() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        startActivityForResult(i, 42)
+    }
+
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req == 42 && res == RESULT_OK) {
+            val uri = data?.data ?: return
+            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Throwable) { }
+            p.edit().putString("bg", uri.toString()).apply()
+            bgKey = ""; bgBmp = null
+            render(4)
+        }
     }
 
     private fun tv(t: String, sz: Float = 14f, c: Int = W, b: Boolean = false) = TextView(this).apply {
@@ -53,9 +100,11 @@ class MainActivity : Activity() {
         text = t; setTextColor(W); isChecked = on; setPadding(0, dp(6), 0, dp(6)); setOnCheckedChangeListener { _, v -> f(v) }
     }
     private fun add(vararg v: View) {
+        val hasBg = p.getString("bg", null) != null
+        val cardBg = if (hasBg) (cardC() and 0x00FFFFFF) or 0xD8000000.toInt() else cardC()
         val c = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = GradientDrawable().apply { setColor(cardC()); cornerRadius = dp(16).toFloat(); setStroke(dp(1), acc()) }
+            background = GradientDrawable().apply { setColor(cardBg); cornerRadius = dp(16).toFloat(); setStroke(dp(1), acc()) }
             v.forEach { addView(it) }
         }
         body.addView(c, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(10)) })
@@ -72,8 +121,9 @@ class MainActivity : Activity() {
         p.edit().putInt("tab", tab).apply()
         window.statusBarColor = bgC(); window.navigationBarColor = bgC()
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(bgC()); setPadding(dp(12), dp(36), dp(12), dp(8))
+            orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(36), dp(12), dp(8))
         }
+        root.background = bgDrawable() ?: ColorDrawable(bgC())
         root.addView(tv("⚡ AUTO OPTIMIZER", 22f, acc(), true))
         val tabs = LinearLayout(this)
         listOf("Inicio", "Juegos", "Info", "Pro", "Estilo").forEachIndexed { i, t ->
@@ -224,6 +274,10 @@ class MainActivity : Activity() {
     }
 
     private fun style() {
+        add(tv("Fondo de la app", 16f, acc(), true),
+            tv("Elige una foto de tu galería como fondo. Las tarjetas se ven semitransparentes encima.", 12f, G),
+            btn("Elegir foto de la galería") { pickBg() },
+            btn("Quitar fondo") { p.edit().remove("bg").apply(); bgKey = ""; bgBmp = null; render(4) })
         add(tv("Interfaz (3 estilos)", 16f, acc(), true))
         names.forEachIndexed { i, n ->
             add(btn((if (p.getInt("theme", 0) == i) "✔ " else "") + n) { p.edit().putInt("theme", i).putInt("acc", 0).apply(); render(4) })
