@@ -3,6 +3,7 @@ package com.autooptimizer
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
@@ -247,6 +248,7 @@ class GameBarService : Service() {
     private var g2: Gauge? = null
     private var ramBar: SegBar? = null
     private var tempBar: SegBar? = null
+    private var perfBtn: Button? = null
     private var silBtn: Button? = null
     private var briBtn: Button? = null
     private var pantBtn: Button? = null
@@ -258,6 +260,9 @@ class GameBarService : Service() {
     private var inGame = true
     private var dnd = false
     private var fast = false
+    private var perfOn = false
+    private var origBri = -1
+    private var lastClean = 0L
     private var briIdx = -1
     private var resIdx = 0
     private val levels = intArrayOf(30, 60, 100)
@@ -351,24 +356,111 @@ class GameBarService : Service() {
         return true
     }
 
-    // Devuelve a lo normal lo que la rayita cambió: resolución, animaciones y No molestar.
+    // Apps que nunca se cierran: las redes sociales y las que tú guardes en "keep".
+    private fun keepSet(): Set<String> {
+        val p = getSharedPreferences("ao", 0)
+        return Opt.social + (p.getStringSet("keep", emptySet()) ?: emptySet())
+    }
+
+    // Cierra apps de fondo, respetando la lista protegida. Devuelve cuántas cerró.
+    private fun cleanBackground(): Int {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val pm = packageManager
+        val home = pm.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
+        val keep = keepSet()
+        var n = 0
+        for (a in pm.getInstalledApplications(0)) {
+            val pk = a.packageName
+            if (pk == packageName || pk == game || pk == home || pk in keep) continue
+            if ((a.flags and ApplicationInfo.FLAG_SYSTEM) != 0) continue
+            am.killBackgroundProcesses(pk); n++
+        }
+        lastClean = System.currentTimeMillis()
+        return n
+    }
+
+    // Activa o desactiva el modo rendimiento: 80% pantalla, brillo 60%, No molestar, limpieza.
+    private fun togglePerf() {
+        if (needShizuku()) return
+        if (perfOn) {
+            restoreAll()
+            msg?.text = "Rendimiento desactivado"
+            return
+        }
+        perfOn = true
+        setPerfBtn()
+        msg?.text = "Aplicando rendimiento…"
+        Thread {
+            val orig = Sz.sh("settings get system screen_brightness").trim().toIntOrNull()
+            if (origBri < 0) origBri = orig ?: 255
+            val n = cleanBackground()
+            Opt.clearOwn(this)
+            Sz.sh("pm trim-caches 999G")
+            Opt.res(80)
+            Sz.sh("settings put system screen_brightness_mode 0; settings put system screen_brightness 153; settings put global zen_mode 1")
+            dnd = true
+            resIdx = 2
+            briIdx = 1
+            h.post {
+                style(silBtn, true); silBtn?.text = "Silencio ON"
+                style(pantBtn, true); pantBtn?.text = "Pantalla 80%"
+                style(briBtn, true); briBtn?.text = "Brillo 60%"
+                msg?.text = "Rendimiento: 80% · brillo 60% · $n apps cerradas"
+            }
+        }.start()
+    }
+
+    // Mientras juegas: si la RAM baja mucho limpia de nuevo, y si hace calor baja a 70%.
+    private fun maintain() {
+        val (a, t) = Opt.ram(this)
+        val tmp = Opt.temp(this)
+        val now = System.currentTimeMillis()
+        if (a.toFloat() / t < 0.20f && now - lastClean > 180_000L) {
+            Thread {
+                val n = cleanBackground()
+                h.post { msg?.text = "RAM baja: cerré $n apps de fondo" }
+            }.start()
+        }
+        if (tmp >= 42f && resIdx != 3 && Sz.ready()) {
+            resIdx = 3
+            Thread {
+                Opt.res(70)
+                h.post {
+                    msg?.text = "Calor: bajé la pantalla a 70%"
+                    pantBtn?.text = "Pantalla 70%"
+                }
+            }.start()
+        }
+    }
+
+    private fun setPerfBtn() {
+        perfBtn?.text = if (perfOn) "Rendimiento ON" else "Rendimiento"
+        style(perfBtn, perfOn)
+    }
+
+    // Devuelve a lo normal lo que la rayita cambió.
     private fun restoreAll() {
         val needRes = resIdx != 0
         val needFast = fast
         val needDnd = dnd
-        if (!needRes && !needFast && !needDnd) return
+        val needBri = briIdx != -1 || origBri >= 0
+        if (!needRes && !needFast && !needDnd && !needBri) return
         if (!Sz.ready()) return
-        resIdx = 0; fast = false; dnd = false
+        val bri = if (origBri >= 0) origBri else 255
+        resIdx = 0; fast = false; dnd = false; briIdx = -1; origBri = -1; perfOn = false
         Thread {
             val cmds = StringBuilder()
             if (needFast) cmds.append("settings put global window_animation_scale 1; settings put global transition_animation_scale 1; settings put global animator_duration_scale 1; ")
             if (needDnd) cmds.append("settings put global zen_mode 0; ")
+            if (needBri) cmds.append("settings put system screen_brightness $bri; ")
             if (cmds.isNotEmpty()) Sz.sh(cmds.toString())
             if (needRes) Opt.res(100)
             h.post {
                 silBtn?.text = "Silencio"; style(silBtn, false)
                 pantBtn?.text = "Pantalla 100%"; style(pantBtn, false)
+                briBtn?.text = "Brillo"; style(briBtn, false)
                 rapBtn?.text = "Rápido"; style(rapBtn, false)
+                setPerfBtn()
                 msg?.text = "Restaurado al salir del juego"
             }
         }.start()
@@ -420,208 +512,4 @@ class GameBarService : Service() {
         fast = !fast
         val s = if (fast) "0.5" else "1"
         Thread {
-            Sz.sh("settings put global window_animation_scale $s; settings put global transition_animation_scale $s; settings put global animator_duration_scale $s")
-        }.start()
-        rapBtn?.text = if (fast) "Rápido ON" else "Rápido"
-        style(rapBtn, fast)
-    }
-
-    private fun toggleSave() {
-        if (needShizuku()) return
-        val p = getSharedPreferences("ao", 0)
-        val on = !p.getBoolean("save", false)
-        p.edit().putBoolean("save", on).apply()
-        Thread { Sz.sh("settings put global low_power ${if (on) 1 else 0}") }.start()
-        ahoBtn?.text = if (on) "Ahorro ON" else "Ahorro"
-        style(ahoBtn, on)
-    }
-
-    private fun toggleRgb() {
-        val p = getSharedPreferences("ao", 0)
-        val on = !p.getBoolean("rgb", false)
-        p.edit().putBoolean("rgb", on).apply()
-        rgbBtn?.text = if (on) "RGB ON" else "RGB"
-        style(rgbBtn, on)
-    }
-
-    private fun toggleAuto() {
-        val p = getSharedPreferences("ao", 0)
-        val on = !p.getBoolean("auto", false)
-        p.edit().putBoolean("auto", on).apply()
-        val i = Intent(this, OptService::class.java)
-        if (on) startForegroundService(i) else stopService(i)
-        autoBtn?.text = if (on) "Auto ON" else "Auto"
-        style(autoBtn, on)
-    }
-
-    private fun openPanel() {
-        val w = wm ?: return
-        if (panel != null) return
-        strip?.visibility = View.GONE
-        val a = acc()
-        val p = getSharedPreferences("ao", 0)
-
-        val frame = FutureFrame(this, a).apply { setOnClickListener { closePanel() } }
-
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), 0, dp(8), 0); isClickable = true
-        }
-        top.addView(label("◢ MODO JUEGO ◣", 12f, a, true), LinearLayout.LayoutParams(0, -2, 1f))
-        val st = label("", 10f, 0xFFB8C7DA.toInt())
-        stat = st
-        top.addView(st)
-        top.addView(btn("✕", false) { closePanel() }, LinearLayout.LayoutParams(dp(40), dp(22)).apply {
-            leftMargin = dp(8)
-        })
-        frame.addView(top, FrameLayout.LayoutParams(-1, dp(30), Gravity.TOP))
-
-        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isClickable = true }
-        left.addView(label("■ ATAJOS", 10f, a, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
-        slot(left, btn("Limpiar RAM", false) { doClean() })
-        silBtn = btn(if (dnd) "Silencio ON" else "Silencio", dnd) { toggleDnd() }
-        slot(left, silBtn!!)
-        briBtn = btn("Brillo", false) { cycleBrightness() }
-        slot(left, briBtn!!)
-        pantBtn = btn("Pantalla 100%", false) { cycleRes() }
-        slot(left, pantBtn!!)
-        left.addView(label("RAM", 9f, 0xFFB8C7DA.toInt()), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        val rb = SegBar(this, a)
-        ramBar = rb
-        left.addView(rb, LinearLayout.LayoutParams(-1, dp(7)).apply { topMargin = dp(3) })
-        frame.addView(left, FrameLayout.LayoutParams(dp(140), -1, Gravity.START).apply {
-            topMargin = dp(40); bottomMargin = dp(12); leftMargin = dp(10)
-        })
-
-        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isClickable = true }
-        right.addView(label("■ RENDIMIENTO", 10f, a, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
-        val rg = p.getBoolean("rgb", false)
-        val sv = p.getBoolean("save", false)
-        val au = p.getBoolean("auto", false)
-        rapBtn = btn(if (fast) "Rápido ON" else "Rápido", fast) { toggleFast() }
-        slot(right, rapBtn!!)
-        ahoBtn = btn(if (sv) "Ahorro ON" else "Ahorro", sv) { toggleSave() }
-        slot(right, ahoBtn!!)
-        rgbBtn = btn(if (rg) "RGB ON" else "RGB", rg) { toggleRgb() }
-        slot(right, rgbBtn!!)
-        autoBtn = btn(if (au) "Auto ON" else "Auto", au) { toggleAuto() }
-        slot(right, autoBtn!!)
-        slot(right, btn("Salir de la rayita", false) { stopSelf() })
-        right.addView(label("TEMP", 9f, 0xFFB8C7DA.toInt()), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        val tb = SegBar(this, a)
-        tempBar = tb
-        right.addView(tb, LinearLayout.LayoutParams(-1, dp(7)).apply { topMargin = dp(3) })
-        frame.addView(right, FrameLayout.LayoutParams(dp(140), -1, Gravity.END).apply {
-            topMargin = dp(40); bottomMargin = dp(12); rightMargin = dp(10)
-        })
-
-        val center = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            isClickable = true; setOnClickListener { closePanel() }
-        }
-        center.addView(label(nombre.uppercase(), 18f, a, true).apply {
-            gravity = Gravity.CENTER; letterSpacing = 0.2f
-            setShadowLayer(dp(8).toFloat(), 0f, 0f, a)
-        })
-        val gr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_HORIZONTAL }
-        val ga = Gauge(this, a); val gb = Gauge(this, a)
-        g1 = ga; g2 = gb
-        gr.addView(ga, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(6), dp(4), dp(6), 0) })
-        gr.addView(gb, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(6), dp(4), dp(6), 0) })
-        center.addView(gr)
-        val mt = label("Toca el centro para cerrar", 10f, 0xFFB8C7DA.toInt()).apply { gravity = Gravity.CENTER }
-        msg = mt
-        center.addView(mt, LinearLayout.LayoutParams(dp(220), -2).apply { topMargin = dp(4) })
-        frame.addView(center, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-            topMargin = dp(38)
-        })
-
-        val lp = WindowManager.LayoutParams(-1, -1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT)
-        w.addView(frame, lp)
-        panel = frame
-        h.removeCallbacks(upd); h.post(upd)
-    }
-
-    private fun closePanel() {
-        h.removeCallbacks(upd)
-        panel?.let { try { wm?.removeView(it) } catch (e: Exception) { } }
-        panel = null; stat = null; msg = null; g1 = null; g2 = null
-        ramBar = null; tempBar = null
-        silBtn = null; briBtn = null; pantBtn = null; rapBtn = null
-        ahoBtn = null; rgbBtn = null; autoBtn = null
-        strip?.visibility = if (inGame) View.VISIBLE else View.GONE
-    }
-
-    private fun readCpu(): Pair<Float, Float>? {
-        if (!Sz.ready()) return null
-        val out = Sz.sh("cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; echo M; cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq")
-        if (out.startsWith("ERR")) return null
-        val parts = out.split("M")
-        if (parts.size < 2) return null
-        val cur = parts[0].split("\n").mapNotNull { it.trim().toLongOrNull() }.maxOrNull() ?: return null
-        val mx = parts[1].split("\n").mapNotNull { it.trim().toLongOrNull() }.maxOrNull() ?: return null
-        if (mx <= 0L) return null
-        return Pair(cur / 1_000_000f, cur.toFloat() / mx)
-    }
-
-    private val upd = object : Runnable {
-        override fun run() {
-            val c = this@GameBarService
-            val (a, t) = Opt.ram(c)
-            val tmp = Opt.temp(c)
-            val bt = Opt.batt(c)
-            val freeF = a.toFloat() / t
-            val used = 1f - freeF
-            stat?.text = "🔋 $bt%  🌡 ${tmp.toInt()}°C"
-            ramBar?.set(used)
-            tempBar?.set(tmp / 60f)
-            if (!busy) {
-                busy = true
-                Thread {
-                    val cpu = try { readCpu() } catch (e: Throwable) { null }
-                    h.post {
-                        busy = false
-                        if (panel == null) return@post
-                        if (cpu != null) {
-                            g1?.set(cpu.second, "%.1f".format(cpu.first), "CPU GHz")
-                        } else {
-                            g1?.set(used, "${(used * 100).toInt()}%", "RAM usada")
-                        }
-                        g2?.set(tmp / 60f, "${tmp.toInt()}°", "Temp")
-                    }
-                }.start()
-            }
-            h.postDelayed(this, 1000)
-        }
-    }
-
-    private val poll = object : Runnable {
-        override fun run() {
-            if (Sz.ready() && game.isNotEmpty()) {
-                Thread {
-                    val o = Sz.sh("dumpsys activity activities | grep -i resumed")
-                    val visible = o.isBlank() || o.startsWith("ERR") || o.contains(game)
-                    h.post {
-                        // Si estaba dentro del juego y ya no, restaura lo que cambió
-                        if (inGame && !visible) restoreAll()
-                        inGame = visible
-                        if (panel == null) strip?.visibility = if (visible) View.VISIBLE else View.GONE
-                    }
-                }.start()
-            }
-            h.postDelayed(this, 3000)
-        }
-    }
-
-    override fun onDestroy() {
-        restoreAll()
-        h.removeCallbacks(poll); h.removeCallbacks(upd)
-        panel?.let { try { wm?.removeView(it) } catch (e: Exception) { } }
-        strip?.let { try { wm?.removeView(it) } catch (e: Exception) { } }
-        panel = null; strip = null
-        super.onDestroy()
-    }
-}
+            Sz.sh("settings put global window_animation_scale $s; settings put global tr
