@@ -239,6 +239,11 @@ class MainActivity : Activity() {
             "Almacenamiento: ${"%.1f".format(ft / 1.0e9)} GB (libre ${"%.1f".format(fa / 1.0e9)} GB)\n" +
             "Pantalla: ${dm.widthPixels}x${dm.heightPixels} @ ${windowManager.defaultDisplay.refreshRate.toInt()} Hz\n" +
             "Temperatura: ${Opt.temp(this)} °C", 14f))
+        add(tv("Créditos", 16f, acc(), true),
+            tv("App creada por ZORO HACK", 14f, W, true),
+            tv("Erik Pérez Ortiz", 14f, W),
+            tv("GitHub: erikperezortiz2-sketch", 12f, G),
+            tv("© 2026 Erik Pérez Ortiz (ZORO HACK). Todos los derechos reservados. Puedes usar la app, pero no copiarla ni venderla como tuya.", 11f, G))
     }
 
     private fun pro() {
