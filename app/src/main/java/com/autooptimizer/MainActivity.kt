@@ -133,15 +133,19 @@ class MainActivity : Activity() {
     private fun sw(t: String, on: Boolean, f: (Boolean) -> Unit) = Switch(this).apply {
         text = t; setTextColor(W); isChecked = on; setPadding(0, dp(6), 0, dp(6)); setOnCheckedChangeListener { _, v -> f(v) }
     }
+
+    // Cada elemento dentro de la tarjeta se separa 8 dp del anterior
     private fun add(vararg v: View) {
         val hasBg = p.getString("bg", null) != null
         val fill = if (hasBg) (cardC() and 0x00FFFFFF) or 0xD8000000.toInt() else cardC()
         val c = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14))
             background = chamfer(fill, acc(), 12)
-            v.forEach { addView(it) }
+            v.forEachIndexed { i, view ->
+                addView(view, LinearLayout.LayoutParams(-1, -2).apply { if (i > 0) topMargin = dp(8) })
+            }
         }
-        body.addView(c, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) })
+        body.addView(c, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(14)) })
     }
     private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
     private fun async(f: () -> String) = Thread {
@@ -170,7 +174,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER; setPadding(0, dp(7), 0, dp(7))
                 background = chamfer(if (sel) acc() else cardC(), acc(), 6)
                 setOnClickListener { render(i) }
-            }, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), dp(12)) })
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(3), 0, dp(3), dp(12)) })
         }
         root.addView(tabs)
         body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -303,7 +307,10 @@ class MainActivity : Activity() {
             btn("Opciones de desarrollador") { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) },
             btn("Conceder permiso") { Sz.ask(); h.postDelayed({ render(3) }, 4000) })
         val row = LinearLayout(this)
-        for (pc in intArrayOf(90, 80, 70, 60)) row.addView(btn("$pc%") { need { Opt.res(pc) } }, LinearLayout.LayoutParams(0, -2, 1f))
+        for (pc in intArrayOf(90, 80, 70, 60)) {
+            row.addView(btn("$pc%") { need { Opt.res(pc) } },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+        }
         add(head("Resolución de pantalla (más FPS)"),
             tv("Menos resolución = menos carga para la GPU. Si algo se ve mal, toca Restaurar.", 12f, G), row,
             btn("Restaurar resolución") { need { Opt.res(100) } })
