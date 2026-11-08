@@ -156,8 +156,14 @@ class SegBar(c: Context, private val col: Int) : View(c) {
     private var frac = 0f
     private val onP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = col }
     private val offP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x332A4A70 }
+    private val warnP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFD60A.toInt() }
+    private val hotP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF2D55.toInt() }
+    private var mode = 0 // 0 normal, 1 amarillo, 2 rojo
 
     fun set(f: Float) { frac = f.coerceIn(0f, 1f); invalidate() }
+
+    // Cambia el color de las barras encendidas: 0 normal, 1 amarillo, 2 rojo.
+    fun setMode(m: Int) { if (mode != m) { mode = m; invalidate() } }
 
     override fun onMeasure(w: Int, h: Int) {
         setMeasuredDimension(MeasureSpec.getSize(w), (7f * d).toInt())
@@ -168,9 +174,10 @@ class SegBar(c: Context, private val col: Int) : View(c) {
         val gap = 2f * d
         val sw = (width - gap * (n - 1)) / n
         val lit = Math.round(frac * n)
+        val onColor = when (mode) { 2 -> hotP; 1 -> warnP; else -> onP }
         for (i in 0 until n) {
             val x = i * (sw + gap)
-            cv.drawRect(x, 0f, x + sw, height.toFloat(), if (i < lit) onP else offP)
+            cv.drawRect(x, 0f, x + sw, height.toFloat(), if (i < lit) onColor else offP)
         }
     }
 }
@@ -405,10 +412,28 @@ class GameBarService : Service() {
         }.start()
     }
 
-    // Apps que nunca se cierran: las redes sociales y las que tú guardes en "keep".
+    // Apps protegidas: las redes sociales siempre, y las que tú agregas desde "Proteger app".
     private fun keepSet(): Set<String> {
         val p = getSharedPreferences("ao", 0)
         return Opt.social + (p.getStringSet("keep", emptySet()) ?: emptySet())
+    }
+
+    private fun protectCurrent() {
+        if (game.isEmpty()) { msg?.text = "No hay juego activo"; return }
+        val p = getSharedPreferences("ao", 0)
+        val set = HashSet(p.getStringSet("keep", emptySet()) ?: emptySet())
+        set.add(game)
+        p.edit().putStringSet("keep", set).apply()
+        msg?.text = "Protegida: $game"
+    }
+
+    private fun unprotectCurrent() {
+        if (game.isEmpty()) return
+        val p = getSharedPreferences("ao", 0)
+        val set = HashSet(p.getStringSet("keep", emptySet()) ?: emptySet())
+        set.remove(game)
+        p.edit().putStringSet("keep", set).apply()
+        msg?.text = "Ya no está protegida"
     }
 
     // Cierra apps de fondo, respetando la lista protegida. Devuelve cuántas cerró.
@@ -666,6 +691,9 @@ class GameBarService : Service() {
         val prof = btn("Guardar perfil", false) { saveProfile() }
         prof.setOnLongClickListener { deleteProfile(); true }
         slot(left, prof)
+        val prot = btn("Proteger app", false) { protectCurrent() }
+        prot.setOnLongClickListener { unprotectCurrent(); true }
+        slot(left, prot)
         left.addView(label("RAM", 9f, 0xFFB8C7DA.toInt()), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         val rb = SegBar(this, a)
         ramBar = rb
@@ -765,6 +793,13 @@ class GameBarService : Service() {
             val used = 1f - freeF
             stat?.text = "🔋 $bt%  🌡 ${tmp.toInt()}°C"
             ramBar?.set(used)
+            // Temperatura por colores: amarillo desde 40 °C, rojo desde 42 °C
+            val heat = when {
+                tmp >= 42f -> 2
+                tmp >= 40f -> 1
+                else -> 0
+            }
+            tempBar?.setMode(heat)
             tempBar?.set(tmp / 60f)
             if (!busy) {
                 busy = true
