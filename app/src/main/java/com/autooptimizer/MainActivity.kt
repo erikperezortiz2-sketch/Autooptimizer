@@ -6,6 +6,11 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.ColorDrawable
@@ -21,6 +26,32 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+
+// Fondo con esquinas cortadas (arriba a la derecha y abajo a la izquierda), estilo rayita
+class Chamfer(private val fill: Int, private val edge: Int, private val cut: Float, private val sw: Float) : Drawable() {
+    private val fp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill }
+    private val ep = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = edge; style = Paint.Style.STROKE; strokeWidth = sw
+    }
+    private val path = Path()
+
+    override fun draw(c: Canvas) {
+        val r = bounds
+        val l = r.left + sw / 2f
+        val t = r.top + sw / 2f
+        val rt = r.right - sw / 2f
+        val b = r.bottom - sw / 2f
+        path.reset()
+        path.moveTo(l, t); path.lineTo(rt - cut, t); path.lineTo(rt, t + cut)
+        path.lineTo(rt, b); path.lineTo(l + cut, b); path.lineTo(l, b - cut); path.close()
+        c.drawPath(path, fp)
+        c.drawPath(path, ep)
+    }
+
+    override fun setAlpha(alpha: Int) { fp.alpha = alpha; ep.alpha = alpha }
+    override fun setColorFilter(cf: ColorFilter?) { fp.colorFilter = cf; ep.colorFilter = cf }
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
 
 class MainActivity : Activity() {
     private val p by lazy { getSharedPreferences("ao", 0) }
@@ -43,6 +74,7 @@ class MainActivity : Activity() {
     private fun cardC() = th()[1]
     private fun acc() = if (p.getInt("acc", 0) != 0) p.getInt("acc", 0) else th()[2]
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun chamfer(fill: Int, edge: Int, cut: Int) = Chamfer(fill, edge, dp(cut).toFloat(), dp(1).toFloat())
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
@@ -91,9 +123,11 @@ class MainActivity : Activity() {
     private fun tv(t: String, sz: Float = 14f, c: Int = W, b: Boolean = false) = TextView(this).apply {
         text = t; textSize = sz; setTextColor(c); if (b) setTypeface(null, Typeface.BOLD)
     }
+    private fun head(t: String) = tv("■ $t", 14f, acc(), true).apply { letterSpacing = 0.08f }
     private fun btn(t: String, f: () -> Unit) = Button(this).apply {
         text = t; isAllCaps = false; setTextColor(bgC()); setTypeface(null, Typeface.BOLD)
-        background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(acc()) }
+        letterSpacing = 0.04f
+        background = chamfer(acc(), acc(), 8)
         setOnClickListener { f() }
     }
     private fun sw(t: String, on: Boolean, f: (Boolean) -> Unit) = Switch(this).apply {
@@ -101,13 +135,13 @@ class MainActivity : Activity() {
     }
     private fun add(vararg v: View) {
         val hasBg = p.getString("bg", null) != null
-        val cardBg = if (hasBg) (cardC() and 0x00FFFFFF) or 0xD8000000.toInt() else cardC()
+        val fill = if (hasBg) (cardC() and 0x00FFFFFF) or 0xD8000000.toInt() else cardC()
         val c = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = GradientDrawable().apply { setColor(cardBg); cornerRadius = dp(16).toFloat(); setStroke(dp(1), acc()) }
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = chamfer(fill, acc(), 12)
             v.forEach { addView(it) }
         }
-        body.addView(c, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(10)) })
+        body.addView(c, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) })
     }
     private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
     private fun async(f: () -> String) = Thread {
@@ -121,17 +155,22 @@ class MainActivity : Activity() {
         p.edit().putInt("tab", tab).apply()
         window.statusBarColor = bgC(); window.navigationBarColor = bgC()
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(36), dp(12), dp(8))
+            orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(38), dp(14), dp(10))
         }
         root.background = bgDrawable() ?: ColorDrawable(bgC())
-        root.addView(tv("⚡ AUTO OPTIMIZER", 22f, acc(), true))
+        root.addView(tv("⚡ AUTO OPTIMIZER", 20f, acc(), true).apply {
+            letterSpacing = 0.12f; setShadowLayer(dp(8).toFloat(), 0f, 0f, acc())
+        })
+        root.addView(View(this).apply { setBackgroundColor(acc()) },
+            LinearLayout.LayoutParams(-1, dp(2)).apply { setMargins(0, dp(6), 0, dp(10)) })
         val tabs = LinearLayout(this)
         listOf("Inicio", "Juegos", "Info", "Pro", "Estilo").forEachIndexed { i, t ->
-            tabs.addView(tv(t, 13f, if (i == tab) bgC() else acc(), true).apply {
-                gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(8))
-                background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(if (i == tab) acc() else cardC()) }
+            val sel = i == tab
+            tabs.addView(tv(t, 12f, if (sel) bgC() else acc(), true).apply {
+                gravity = Gravity.CENTER; setPadding(0, dp(7), 0, dp(7))
+                background = chamfer(if (sel) acc() else cardC(), acc(), 6)
                 setOnClickListener { render(i) }
-            }, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), dp(8), dp(2), dp(8)) })
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), dp(12)) })
         }
         root.addView(tabs)
         body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -141,8 +180,8 @@ class MainActivity : Activity() {
     }
 
     private fun home() {
-        val stats = tv("", 15f)
-        add(tv("Estado en vivo", 16f, acc(), true), stats)
+        val stats = tv("", 13f)
+        add(head("Estado en vivo"), stats)
         val tick = object : Runnable {
             override fun run() {
                 val (a, t) = Opt.ram(this@MainActivity); val (fa, ft) = Opt.storage()
@@ -166,7 +205,7 @@ class MainActivity : Activity() {
             if (Sz.ready()) async { Sz.sh("settings put global low_power ${if (on) 1 else 0}"); "Ahorro de batería ${if (on) "activado" else "desactivado"}" }
             else startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS))
         }, tv("Con Shizuku se activa directo; sin Shizuku te abre el ajuste del sistema.", 12f, G))
-        add(tv("Luz RGB en notificaciones", 16f, acc(), true),
+        add(head("Luz RGB en notificaciones"),
             tv("Borde muy fino y suave al llegar mensajes de WhatsApp, Instagram, Facebook, YouTube, Telegram, TikTok…", 12f, G),
             sw("Activar luz RGB", p.getBoolean("rgb", false)) { p.edit().putBoolean("rgb", it).apply() },
             btn("1) Permiso: acceso a notificaciones") { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
@@ -178,7 +217,7 @@ class MainActivity : Activity() {
 
     private fun games() {
         val pm = packageManager
-        add(tv("Mis juegos", 16f, acc(), true), btn("＋ Agregar juego") { pick() },
+        add(head("Mis juegos"), btn("＋ Agregar juego") { pick() },
             tv("Mantén pulsado un juego para quitarlo.", 12f, G))
         add(sw("Rayita de juego (panel en el borde)", p.getBoolean("bar", true)) { p.edit().putBoolean("bar", it).apply() },
             tv("Al tocar 'Optimizar y jugar' aparece una rayita en el borde del juego. Tócala para abrir el panel.", 12f, G))
@@ -228,7 +267,7 @@ class MainActivity : Activity() {
 
     private fun info() {
         val (a, t) = Opt.ram(this); val (fa, ft) = Opt.storage(); val dm = resources.displayMetrics
-        add(tv("Tu dispositivo", 16f, acc(), true), tv(
+        add(head("Tu dispositivo"), tv(
             "Modelo: ${Build.MANUFACTURER} ${Build.MODEL}\n" +
             "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n" +
             "RAM total: ${"%.1f".format(t / 1073741824.0)} GB\n" +
@@ -239,7 +278,7 @@ class MainActivity : Activity() {
             "Almacenamiento: ${"%.1f".format(ft / 1.0e9)} GB (libre ${"%.1f".format(fa / 1.0e9)} GB)\n" +
             "Pantalla: ${dm.widthPixels}x${dm.heightPixels} @ ${windowManager.defaultDisplay.refreshRate.toInt()} Hz\n" +
             "Temperatura: ${Opt.temp(this)} °C", 14f))
-        add(tv("Créditos", 16f, acc(), true),
+        add(head("Créditos"),
             tv("App creada por ZORO HACK", 14f, W, true),
             tv("Erik Pérez Ortiz", 14f, W),
             tv("GitHub: erikperezortiz2-sketch", 12f, G),
@@ -248,8 +287,8 @@ class MainActivity : Activity() {
 
     private fun pro() {
         val st = if (Sz.ready()) "✅ Shizuku conectado y con permiso" else if (Sz.running()) "⚠️ Shizuku activo, falta el permiso" else "❌ Shizuku no está activo"
-        add(tv("Modo Pro (Shizuku, gratis)", 16f, acc(), true), tv(st, 14f))
-        add(tv("Tutorial paso a paso", 15f, acc(), true), tv(
+        add(head("Modo Pro (Shizuku, gratis)"), tv(st, 14f))
+        add(head("Tutorial paso a paso"), tv(
             "1) Instala Shizuku (gratis, Play Store o GitHub).\n" +
             "2) Ajustes > Acerca del teléfono: toca 7 veces 'Número de compilación'.\n" +
             "3) Opciones de desarrollador: activa 'Depuración inalámbrica' (con WiFi).\n" +
@@ -265,10 +304,10 @@ class MainActivity : Activity() {
             btn("Conceder permiso") { Sz.ask(); h.postDelayed({ render(3) }, 4000) })
         val row = LinearLayout(this)
         for (pc in intArrayOf(90, 80, 70, 60)) row.addView(btn("$pc%") { need { Opt.res(pc) } }, LinearLayout.LayoutParams(0, -2, 1f))
-        add(tv("Resolución de pantalla (más FPS)", 16f, acc(), true),
+        add(head("Resolución de pantalla (más FPS)"),
             tv("Menos resolución = menos carga para la GPU. Si algo se ve mal, toca Restaurar.", 12f, G), row,
             btn("Restaurar resolución") { need { Opt.res(100) } })
-        add(tv("Más herramientas", 16f, acc(), true),
+        add(head("Más herramientas"),
             btn("Limpiar caché de TODAS las apps") { need { Sz.sh("pm trim-caches 999G"); "Caché global limpiada" } },
             btn("Animaciones rápidas (0.5x)") {
                 need { Sz.sh("settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; settings put global animator_duration_scale 0.5"); "Animaciones 0.5x" }
@@ -279,11 +318,11 @@ class MainActivity : Activity() {
     }
 
     private fun style() {
-        add(tv("Fondo de la app", 16f, acc(), true),
+        add(head("Fondo de la app"),
             tv("Elige una foto de tu galería como fondo. Las tarjetas se ven semitransparentes encima.", 12f, G),
             btn("Elegir foto de la galería") { pickBg() },
             btn("Quitar fondo") { p.edit().remove("bg").apply(); bgKey = ""; bgBmp = null; render(4) })
-        add(tv("Interfaz (3 estilos)", 16f, acc(), true))
+        add(head("Interfaz (3 estilos)"))
         names.forEachIndexed { i, n ->
             add(btn((if (p.getInt("theme", 0) == i) "✔ " else "") + n) { p.edit().putInt("theme", i).putInt("acc", 0).apply(); render(4) })
         }
@@ -294,6 +333,6 @@ class MainActivity : Activity() {
                 setOnClickListener { p.edit().putInt("acc", c).apply(); render(4) }
             }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
-        add(tv("Color de acento", 16f, acc(), true), row)
+        add(head("Color de acento"), row)
     }
 }
