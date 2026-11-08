@@ -1,16 +1,26 @@
 package com.autooptimizer
 
 import android.Manifest
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.TimeInterpolator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Path
+import android.graphics.RadialGradient
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.ColorDrawable
@@ -24,7 +34,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.animation.LinearInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.*
 
 // Fondo con esquinas cortadas (arriba a la derecha y abajo a la izquierda), estilo rayita
@@ -51,6 +64,119 @@ class Chamfer(private val fill: Int, private val edge: Int, private val cut: Flo
     override fun setAlpha(alpha: Int) { fp.alpha = alpha; ep.alpha = alpha }
     override fun setColorFilter(cf: ColorFilter?) { fp.colorFilter = cf; ep.colorFilter = cf }
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+// Botón circular con brillo, anillos giratorios, pulsación y onda al tocar
+class PulseButton(c: Context, private val accent: Int, private val label: String, private val onTap: () -> Unit) : View(c) {
+    private val d = resources.displayMetrics.density
+    private var scale = 1f
+    private var ripple = -1f
+    private var spin = 0f
+    private val fillP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 6f * d; color = accent; alpha = 120
+        maskFilter = BlurMaskFilter(10f * d, BlurMaskFilter.Blur.NORMAL)
+    }
+    private val ringP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 2.5f * d; color = accent; alpha = 150
+    }
+    private val arcP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 4f * d; color = accent; strokeCap = Paint.Cap.ROUND
+    }
+    private val rippleP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 3f * d; color = accent
+    }
+    private val textP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF0B0F1A.toInt(); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+        letterSpacing = 0.08f
+    }
+    private val spinAnim = ValueAnimator.ofFloat(0f, 360f).apply {
+        duration = 8000; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
+        addUpdateListener { spin = it.animatedValue as Float; invalidate() }
+    }
+
+    init { setLayerType(View.LAYER_TYPE_SOFTWARE, null) }
+
+    private fun dimC(c: Int) = Color.rgb(Color.red(c) * 6 / 10, Color.green(c) * 6 / 10, Color.blue(c) * 6 / 10)
+
+    override fun onMeasure(w: Int, h: Int) {
+        setMeasuredDimension(MeasureSpec.getSize(w), (190f * d).toInt())
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        spinAnim.start()
+    }
+
+    override fun onDetachedFromWindow() {
+        spinAnim.cancel()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(cv: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = minOf(width, height) / 2f - 24f * d
+        cv.save()
+        cv.scale(scale, scale, cx, cy)
+
+        cv.drawCircle(cx, cy, r + 4f * d, glowP)
+        fillP.shader = RadialGradient(cx - r * 0.25f, cy - r * 0.3f, r * 1.3f,
+            intArrayOf(0xCCFFFFFF.toInt(), accent, dimC(accent)), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+        cv.drawCircle(cx, cy, r, fillP)
+
+        cv.drawCircle(cx, cy, r + 10f * d, ringP)
+        cv.save()
+        cv.rotate(spin, cx, cy)
+        val box = RectF(cx - r - 16f * d, cy - r - 16f * d, cx + r + 16f * d, cy + r + 16f * d)
+        cv.drawArc(box, 0f, 70f, false, arcP)
+        cv.drawArc(box, 120f, 70f, false, arcP)
+        cv.drawArc(box, 240f, 70f, false, arcP)
+        cv.restore()
+
+        textP.textSize = 22f * d
+        cv.drawText("⚡", cx, cy + 2f * d, textP)
+        textP.textSize = 12f * d
+        cv.drawText(label, cx, cy + 22f * d, textP)
+
+        if (ripple >= 0f) {
+            rippleP.alpha = (255 * (1f - ripple)).toInt()
+            cv.drawCircle(cx, cy, r + 10f * d + ripple * 40f * d, rippleP)
+        }
+        cv.restore()
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.action) {
+            MotionEvent.ACTION_DOWN -> animScale(0.9f, 90, LinearInterpolator())
+            MotionEvent.ACTION_UP -> {
+                animScale(1f, 260, OvershootInterpolator(2f))
+                startRipple()
+                onTap()
+            }
+            MotionEvent.ACTION_CANCEL -> animScale(1f, 160, LinearInterpolator())
+        }
+        return true
+    }
+
+    private fun animScale(to: Float, ms: Long, ip: TimeInterpolator) {
+        ValueAnimator.ofFloat(scale, to).apply {
+            duration = ms; interpolator = ip
+            addUpdateListener { scale = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    private fun startRipple() {
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 600
+            addUpdateListener { ripple = it.animatedValue as Float; invalidate() }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: Animator) { ripple = -1f; invalidate() }
+            })
+            start()
+        }
+    }
 }
 
 class MainActivity : Activity() {
@@ -198,7 +324,7 @@ class MainActivity : Activity() {
             }
         }
         tick.run()
-        add(btn("⚡ OPTIMIZAR AHORA") { async { Opt.full(this) } })
+        add(PulseButton(this, acc(), "OPTIMIZAR") { async { Opt.full(this) } })
         add(sw("Modo automático (cada 10 s)", p.getBoolean("auto", false)) { on ->
             p.edit().putBoolean("auto", on).apply()
             val i = Intent(this, OptService::class.java)
