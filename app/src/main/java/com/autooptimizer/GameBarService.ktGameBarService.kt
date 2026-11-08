@@ -330,6 +330,7 @@ class GameBarService : Service() {
         if (!Settings.canDrawOverlays(this)) { stopSelf(); return START_NOT_STICKY }
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         showStrip()
+        applyProfile()
         h.removeCallbacks(poll); h.post(poll)
         return START_NOT_STICKY
     }
@@ -359,6 +360,49 @@ class GameBarService : Service() {
         if (Sz.ready()) return false
         msg?.text = "Necesita Shizuku (pestaña Pro)"
         return true
+    }
+
+    // Perfiles por juego: se guardan en "prof_<paquete>" como "resolución|brillo|animaciones".
+    private fun profileKey() = "prof_$game"
+
+    private fun saveProfile() {
+        if (game.isEmpty()) { msg?.text = "No hay juego activo"; return }
+        val pc = resLevels[resIdx]
+        val bri = if (briIdx >= 0) levels[briIdx] else 100
+        getSharedPreferences("ao", 0).edit()
+            .putString(profileKey(), "$pc|$bri|${if (fast) 1 else 0}").apply()
+        msg?.text = "Perfil guardado: $pc% · brillo $bri%"
+    }
+
+    private fun deleteProfile() {
+        if (game.isEmpty()) return
+        getSharedPreferences("ao", 0).edit().remove(profileKey()).apply()
+        msg?.text = "Perfil borrado para este juego"
+    }
+
+    // Al abrir el juego, aplica el perfil guardado si existe.
+    private fun applyProfile() {
+        if (game.isEmpty() || !Sz.ready()) return
+        val s = getSharedPreferences("ao", 0).getString(profileKey(), null) ?: return
+        val parts = s.split("|")
+        if (parts.size < 3) return
+        val pc = parts[0].toIntOrNull() ?: return
+        val bri = parts[1].toIntOrNull() ?: return
+        val fastOn = parts[2] == "1"
+        val ri = resLevels.indexOf(pc)
+        val bi = levels.indexOf(bri)
+        if (ri >= 0) resIdx = ri
+        if (bi >= 0) briIdx = bi
+        fast = fastOn
+        Thread {
+            if (origBri < 0) origBri = Sz.sh("settings get system screen_brightness").trim().toIntOrNull() ?: 255
+            val cmds = StringBuilder()
+            if (bi >= 0) cmds.append("settings put system screen_brightness_mode 0; settings put system screen_brightness ${255 * bri / 100}; ")
+            if (fastOn) cmds.append("settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; settings put global animator_duration_scale 0.5; ")
+            if (cmds.isNotEmpty()) Sz.sh(cmds.toString())
+            if (ri > 0) Opt.res(pc)
+            h.post { msg?.text = "Perfil aplicado: $pc% · brillo $bri%" }
+        }.start()
     }
 
     // Apps que nunca se cierran: las redes sociales y las que tú guardes en "keep".
@@ -619,6 +663,9 @@ class GameBarService : Service() {
         slot(left, briBtn!!)
         pantBtn = btn("Pantalla 100%", false) { cycleRes() }
         slot(left, pantBtn!!)
+        val prof = btn("Guardar perfil", false) { saveProfile() }
+        prof.setOnLongClickListener { deleteProfile(); true }
+        slot(left, prof)
         left.addView(label("RAM", 9f, 0xFFB8C7DA.toInt()), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         val rb = SegBar(this, a)
         ramBar = rb
