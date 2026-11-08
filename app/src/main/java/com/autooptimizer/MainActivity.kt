@@ -237,7 +237,40 @@ class MainActivity : Activity() {
             }
             add(row)
         }
+        protectedCard()
     }
+
+    // Lista de apps protegidas: las que marcaste con "Proteger app" se pueden quitar aquí.
+    private fun protectedCard() {
+        val pm = packageManager
+        val keep = (p.getStringSet("keep", emptySet()) ?: emptySet()).toList().sorted()
+        val views = mutableListOf<View>(
+            head("Apps protegidas"),
+            tv("Estas apps no se cierran al limpiar. Las redes sociales siempre están protegidas y no se pueden quitar.", 12f, G)
+        )
+        if (keep.isEmpty()) {
+            views.add(tv("No tienes apps protegidas extra. Entra a un juego, abre la rayita y toca Proteger app.", 12f, G))
+        } else {
+            for (pk in keep) {
+                val name = try { pm.getApplicationLabel(pm.getApplicationInfo(pk, 0)).toString() } catch (e: Exception) { pk }
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                row.addView(tv(name, 13f, W, true), LinearLayout.LayoutParams(0, -2, 1f))
+                row.addView(btn("Quitar") { unprotect(pk) }.apply { textSize = 12f },
+                    LinearLayout.LayoutParams(dp(100), -2))
+                views.add(row)
+            }
+        }
+        add(*views.toTypedArray())
+    }
+
+    private fun unprotect(pk: String) {
+        val set = HashSet(p.getStringSet("keep", emptySet()) ?: emptySet())
+        set.remove(pk)
+        p.edit().putStringSet("keep", set).apply()
+        toast("Ya no está protegida")
+        render(1)
+    }
+
     private fun pick() {
         val pm = packageManager
         val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
